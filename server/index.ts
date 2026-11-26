@@ -59,7 +59,7 @@ export function createApp(options?: { storePath?: string }) {
       geminiConfigured: Boolean((process.env.GEMINI_API_KEY || '').trim()),
       openAqConfigured: Boolean((process.env.OPENAQ_API_KEY || '').trim()),
       purpleAirConfigured: Boolean((process.env.PURPLEAIR_API_KEY || '').trim()),
-      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
     });
   });
 

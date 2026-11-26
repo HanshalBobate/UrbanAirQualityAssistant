@@ -12,7 +12,30 @@ import {
   computeCalibratedBaselineExposure,
 } from '../shared/impactMath.js';
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const MODEL_CANDIDATES = Array.from(
+  new Set([DEFAULT_MODEL, 'gemini-3.8-flash', 'gemini-2.5-flash'])
+);
+
+async function generateWithFallbackModels<T>(
+  runner: (model: string) => Promise<T>
+): Promise<{ result: T; modelUsed: string }> {
+  let lastError: unknown;
+  for (const model of MODEL_CANDIDATES) {
+    try {
+      const result = await runner(model);
+      return { result, modelUsed: model };
+    } catch (err) {
+      lastError = err;
+      const msg = (err as Error)?.message ?? String(err);
+      if (msg.includes('NOT_FOUND') || msg.includes('404') || msg.includes('no longer available')) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
 
 const LANGUAGE_NAMES: Record<SupportedLanguage, string> = {
   en: 'English',
@@ -575,15 +598,17 @@ REQUIREMENTS:
 - In directImpact.explanation, clearly explain the physical/health mechanism and numbers in plain language.
 - In directImpact.communityMultiplierNote, explain the collective impact if 100 local households adopt the action.`;
 
-    const response = await ai.models.generateContent({
-      model: DEFAULT_MODEL,
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: RECOMMENDATION_SCHEMA,
-        temperature: 0.4,
-      },
-    });
+    const { result: response, modelUsed } = await generateWithFallbackModels((model) =>
+      ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: RECOMMENDATION_SCHEMA,
+          temperature: 0.4,
+        },
+      })
+    );
 
     const text = response.text;
     if (!text) {
@@ -601,7 +626,7 @@ REQUIREMENTS:
 
     return {
       engine: 'gemini-live',
-      modelName: DEFAULT_MODEL,
+      modelName: modelUsed,
       generatedAt: new Date().toISOString(),
       situationBrief: parsed.situationBrief,
       alertLevel: getAlertLevel(air.current.usAqi),
@@ -669,11 +694,13 @@ User Question: ${question}
 
 Respond in clear, structured markdown (short paragraphs or 3-5 bullet points). Explicitly explain the direct health/exposure or emissions impact of any recommendation you give. Keep it practical and grounded.`;
 
-      const result = await ai.models.generateContent({
-        model: DEFAULT_MODEL,
-        contents: prompt,
-        config: { temperature: 0.45 },
-      });
+      const { result } = await generateWithFallbackModels((model) =>
+        ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: { temperature: 0.45 },
+        })
+      );
 
       if (result.text) {
         return { reply: result.text.trim(), engine: 'gemini-live' };

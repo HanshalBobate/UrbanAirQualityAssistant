@@ -15,7 +15,7 @@ Severe winter smog is driven by **thermal inversions** (cold, calm surface air t
    - Queries nearby physical street sensors via **Sensor.Community** (keyless) plus optional **OpenAQ v3** (`OPENAQ_API_KEY`) and **PurpleAir** (`PURPLEAIR_API_KEY`), blending readings using inverse-distance weighting (`computeBlendedGroundPm25`).
    - Accepts an optional user-measured indoor PM2.5 reading (`measuredIndoorPm25`) to compute the actual **Indoor/Outdoor (I/O) infiltration ratio** and calibrate the 24-hour baseline inhaled dose (`computeCalibratedBaselineExposure`).
 3. **Structured GenAI Synthesis + Deterministic Fallback** (`server/advisorService.ts`):
-   - When `GEMINI_API_KEY` is configured (in `.env` or via the in-app Settings dialog), calls Google Gemini (`@google/genai`, `gemini-2.5-flash`) with a strict `responseSchema` to generate 9 tailored recommendations across **Low-Emission Daily Routines**, **Indoor Air Quality Hacks**, and **Sustainable Alternatives**, plus context-aware conversational Q&A (`/api/chat`).
+   - When `GEMINI_API_KEY` is configured (in `.env` or via the in-app Settings dialog), calls Google Gemini (`@google/genai`, `gemini-3.8-flash`) with a strict `responseSchema` to generate 9 tailored recommendations across **Low-Emission Daily Routines**, **Indoor Air Quality Hacks**, and **Sustainable Alternatives**, plus context-aware conversational Q&A (`/api/chat`).
    - Falls back transparently to a deterministic, profile-and-location-parameterized Local Advisor Engine (`buildLocalActionPlan`) when no API key is present or an upstream call fails.
 4. **Direct Impact Math & Diminishing-Returns Stacking** (`shared/impactMath.ts`):
    - Models stacked exposure reduction multiplicatively (`1 - Π(1 - r_i)`, capped at 90%) so adopting multiple actions produces physically realistic daily PM2.5 dose reductions (`µg/person/day`) alongside `CO₂e` (`kg/day`) and local `NOₓ + primary PM2.5` (`g/day`) avoided, scaled across a selectable neighborhood multiplier (`10` to `1,000` households).
@@ -72,7 +72,7 @@ npm start        # Serves production dist/ + /api/* on http://localhost:3001
 
 ### Environment Variables (`.env.example`)
 
-- `GEMINI_API_KEY`: Optional; enables live Gemini (`gemini-2.5-flash`) synthesis and chat.
+- `GEMINI_API_KEY`: Optional; enables live Gemini (`gemini-3.8-flash`) synthesis and chat.
 - `OPENAQ_API_KEY` / `PURPLEAIR_API_KEY`: Optional; augments keyless Sensor.Community ground stations.
 - `PORT`: Server port (default `3001`).
 
