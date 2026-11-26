@@ -249,11 +249,11 @@ export default function App() {
         } | null>(STORAGE_KEYS.location, null);
 
         const initial = savedLoc ?? presetList[0] ?? {
-          name: 'Lahore',
-          country: 'Pakistan',
-          latitude: 31.5497,
-          longitude: 74.3436,
-          timezone: 'Asia/Karachi',
+          name: 'Nagpur',
+          country: 'India',
+          latitude: 21.1458,
+          longitude: 79.0882,
+          timezone: 'Asia/Kolkata',
         };
         const aq = await fetchAirQuality(initial);
         if (!mounted) return;
@@ -613,7 +613,7 @@ export default function App() {
             {/* Shareable Neighborhood & School Pledges */}
             <CommunityPledgesSection
               pledges={pledges}
-              currentCity={airQuality?.locationName ?? 'Lahore'}
+              currentCity={airQuality?.locationName ?? 'Nagpur'}
               highlightedPledgeId={highlightedPledgeId}
               joinedPledgeIds={joinedPledgeIds}
               onJoin={handleJoinPledge}

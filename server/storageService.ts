@@ -20,8 +20,8 @@ const DEFAULT_PLEDGES: CommunityPledge[] = [
     title: 'No-Idling School Drop-Off Lane',
     description:
       'Parents and school buses turn off ignitions within 200 m of school gates during winter morning & afternoon pickup.',
-    city: 'Lahore',
-    organizer: 'Model Town Parent Clean-Air Circle',
+    city: 'Nagpur',
+    organizer: 'Dharampeth Parent Clean-Air Circle',
     targetHouseholds: 150,
     joinedHouseholds: 64,
     co2eSavedKgPerHouseholdDay: 0.7,

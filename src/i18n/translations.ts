@@ -51,7 +51,7 @@ export const TRANSLATIONS: Record<SupportedLanguage, TranslationStrings> = {
     geminiConnected: 'Gemini Connected',
     morningAlerts: 'Morning Alerts',
     printableGuide: 'Printable Guide',
-    searchPlaceholder: 'Search any city or neighborhood (e.g., Lahore, Denver, Warsaw)...',
+    searchPlaceholder: 'Search any city or neighborhood (e.g., Nagpur, New Delhi, Denver)...',
     winterHotspots: 'Winter Smog Hotspots:',
     nearbySensors: 'Nearby Ground Stations',
     noSensorsNearby: 'No public street sensors within 25 km — using modeled Open-Meteo telemetry',

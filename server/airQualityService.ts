@@ -15,14 +15,14 @@ import {
 
 export const PRESET_CITIES: PresetCity[] = [
   {
-    id: 'lahore',
-    label: 'Lahore, PK (Severe Winter Smog)',
-    name: 'Lahore',
-    country: 'Pakistan',
-    latitude: 31.5497,
-    longitude: 74.3436,
-    timezone: 'Asia/Karachi',
-    note: 'Frequent winter thermal inversions + crop & traffic particulates',
+    id: 'nagpur',
+    label: 'Nagpur, IN (Winter Haze & Urban Traffic)',
+    name: 'Nagpur',
+    country: 'India',
+    latitude: 21.1458,
+    longitude: 79.0882,
+    timezone: 'Asia/Kolkata',
+    note: 'Winter surface inversions + road dust, traffic, and biomass smoke',
   },
   {
     id: 'delhi',
@@ -88,7 +88,7 @@ interface FallbackBaseline {
 }
 
 const FALLBACK_BASELINES: Record<string, FallbackBaseline> = {
-  lahore: { pm25: 168, pm10: 240, no2: 64, o3: 24, co: 1600, temp: 11, humidity: 78, wind: 4.1 },
+  nagpur: { pm25: 84, pm10: 138, no2: 46, o3: 32, co: 1150, temp: 16, humidity: 62, wind: 4.8 },
   'new delhi': { pm25: 195, pm10: 295, no2: 72, o3: 28, co: 1850, temp: 12, humidity: 76, wind: 3.8 },
   'salt lake city': { pm25: 54, pm10: 78, no2: 46, o3: 32, co: 750, temp: -2, humidity: 79, wind: 4.5 },
   kraków: { pm25: 76, pm10: 108, no2: 49, o3: 26, co: 1100, temp: 1, humidity: 82, wind: 5.2 },

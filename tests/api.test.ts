@@ -52,7 +52,7 @@ describe('ClearAir API endpoints', () => {
   });
 
   it('rejects oversized chat questions with 400', async () => {
-    const airQuality = buildFallbackSnapshot('Lahore', 'Pakistan', 31.55, 74.34);
+    const airQuality = buildFallbackSnapshot('Nagpur', 'India', 21.1458, 79.0882);
     const res = await request(app).post('/api/chat').send({
       question: 'a'.repeat(1600),
       airQuality,
@@ -62,7 +62,7 @@ describe('ClearAir API endpoints', () => {
   });
 
   it('generates sensor-calibrated and multilingual recommendations across all 3 pillars', async () => {
-    const airQuality = buildFallbackSnapshot('Lahore', 'Pakistan', 31.55, 74.34, 'Asia/Karachi');
+    const airQuality = buildFallbackSnapshot('Nagpur', 'India', 21.1458, 79.0882, 'Asia/Kolkata');
     const res = await request(app)
       .post('/api/recommendations')
       .send({ airQuality, profile: sampleProfile, language: 'ur' });
@@ -86,9 +86,9 @@ describe('ClearAir API endpoints', () => {
   it('persists and evaluates morning smog & inversion alert subscriptions', async () => {
     const createRes = await request(app).post('/api/alerts').send({
       label: 'Morning Kids Walk Alert',
-      locationName: 'Lahore',
-      latitude: 31.55,
-      longitude: 74.34,
+      locationName: 'Nagpur',
+      latitude: 21.1458,
+      longitude: 79.0882,
       aqiThreshold: 150,
       alertOnInversion: true,
       morningTime: '07:00',
@@ -102,7 +102,7 @@ describe('ClearAir API endpoints', () => {
     expect(listRes.status).toBe(200);
     expect(listRes.body.alerts.some((a: { id: string }) => a.id === alertId)).toBe(true);
 
-    const severeSnapshot = buildFallbackSnapshot('Lahore', 'Pakistan', 31.55, 74.34);
+    const severeSnapshot = buildFallbackSnapshot('Nagpur', 'India', 21.1458, 79.0882);
     const evalRes = await request(app)
       .post('/api/alerts/evaluate')
       .send({ airQuality: severeSnapshot });
