@@ -1,20 +1,29 @@
 import { useState } from 'react';
-import { BarChart3, Globe2, HeartPulse, Users } from 'lucide-react';
+import { BarChart3, Gauge, Globe2, HeartPulse, Printer, Users } from 'lucide-react';
 import type { ActionRecommendation } from '@shared/types';
 import { combineAdoptedImpacts } from '@shared/impactMath';
+import type { TranslationStrings } from '../i18n/translations';
 
 interface ImpactLedgerProps {
   baselineDailyExposureUg: number;
+  infiltrationRatio: number;
+  exposureCalibratedBySensor: boolean;
   adoptedActions: ActionRecommendation[];
   householdSize: number;
+  onOpenPrintableGuide: () => void;
+  t: TranslationStrings;
 }
 
 const COMMUNITY_SCALES = [10, 50, 100, 250, 500, 1000];
 
 export function ImpactLedger({
   baselineDailyExposureUg,
+  infiltrationRatio,
+  exposureCalibratedBySensor,
   adoptedActions,
   householdSize,
+  onOpenPrintableGuide,
+  t,
 }: ImpactLedgerProps) {
   const [communityHouseholds, setCommunityHouseholds] = useState(100);
 
@@ -33,7 +42,7 @@ export function ImpactLedger({
         <div>
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-sky-300">
             <BarChart3 className="h-4 w-4" />
-            Direct Impact Ledger
+            {t.directImpactLedger}
           </div>
           <h2 className="mt-0.5 text-lg font-bold">
             What Your {adoptedActions.length} Adopted{' '}
@@ -41,8 +50,28 @@ export function ImpactLedger({
           </h2>
         </div>
 
-        <div className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-medium text-sky-100">
-          Diminishing-returns modeled (never &gt;90%)
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium ${
+              exposureCalibratedBySensor
+                ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
+                : 'border-white/15 bg-white/10 text-sky-100'
+            }`}
+          >
+            <Gauge className="h-3.5 w-3.5" />
+            {exposureCalibratedBySensor
+              ? `Sensor-Calibrated (I/O ${infiltrationRatio})`
+              : `Modeled I/O ${infiltrationRatio}`}
+          </span>
+
+          <button
+            type="button"
+            onClick={onOpenPrintableGuide}
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold text-white transition hover:bg-white/20"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            {t.printableGuide}
+          </button>
         </div>
       </div>
 
@@ -89,8 +118,11 @@ export function ImpactLedger({
           </div>
 
           <p className="mt-3 text-[11px] leading-relaxed text-slate-300">
-            Calculated from ~15 m³/day breathing volume, building infiltration, and multiplicative
-            exposure stacking across your adopted routines and indoor filtration choices.
+            Calculated from ~15 m³/day breathing volume,{' '}
+            {exposureCalibratedBySensor
+              ? 'your measured indoor PM2.5 monitor'
+              : 'building infiltration factor'}
+            , and diminishing-returns exposure stacking (capped at 90%).
           </p>
         </div>
 

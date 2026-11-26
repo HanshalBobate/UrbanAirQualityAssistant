@@ -1,6 +1,7 @@
 import type {
   ActionRecommendation,
   AqiCategory,
+  GroundStationReading,
   HourlyAirPoint,
   HousingType,
   InversionRisk,
@@ -103,7 +104,6 @@ export function getWindowQuality(usAqi: number): 'safe' | 'caution' | 'avoid' {
 export function findBestVentilationWindow(hourly: HourlyAirPoint[]): VentilationWindow | null {
   if (hourly.length < 3) return null;
 
-  // Consider a 3-hour rolling window to avoid recommending a brief single-hour dip.
   let bestIdx = 0;
   let bestAvgAqi = Infinity;
   let bestAvgPm25 = Infinity;
@@ -140,11 +140,23 @@ export function findBestVentilationWindow(hourly: HourlyAirPoint[]): Ventilation
   };
 }
 
-export function computeBaselineDailyExposureUg(
+export interface ExposureBaselineResult {
+  baselineDailyExposureUg: number;
+  infiltrationRatio: number;
+  calibratedBySensor: boolean;
+}
+
+/**
+ * Computes daily inhaled PM2.5 baseline (ug/day). When the user enters a real
+ * indoor PM2.5 reading (from an indoor monitor), the effective I/O infiltration ratio
+ * and indoor dose are calibrated directly to that measurement.
+ */
+export function computeCalibratedBaselineExposure(
   outdoorPm25: number,
   housingType: HousingType,
-  hasAirPurifier: boolean
-): number {
+  hasAirPurifier: boolean,
+  measuredIndoorPm25?: number | null
+): ExposureBaselineResult {
   const infiltrationByHousing: Record<HousingType, number> = {
     apartment: 0.48,
     single_family_house: 0.56,
@@ -152,13 +164,72 @@ export function computeBaselineDailyExposureUg(
     community_center_school: 0.62,
   };
 
-  // Weighted indoor (85% of winter day) + outdoor (15% of winter day) exposure
+  if (
+    typeof measuredIndoorPm25 === 'number' &&
+    Number.isFinite(measuredIndoorPm25) &&
+    measuredIndoorPm25 >= 0
+  ) {
+    const safeOutdoor = Math.max(1, outdoorPm25);
+    const ratio = Math.round((measuredIndoorPm25 / safeOutdoor) * 100) / 100;
+    const effectiveConcentration = 0.85 * measuredIndoorPm25 + 0.15 * outdoorPm25;
+    return {
+      baselineDailyExposureUg: Math.round(effectiveConcentration * DAILY_BREATHING_VOLUME_M3),
+      infiltrationRatio: Math.min(2, Math.max(0.05, ratio)),
+      calibratedBySensor: true,
+    };
+  }
+
   const indoorFactor = infiltrationByHousing[housingType] ?? 0.56;
   const purifierFactor = hasAirPurifier ? 0.65 : 1.0;
-  const effectiveConcentration =
-    outdoorPm25 * (0.85 * indoorFactor * purifierFactor + 0.15);
+  const effectiveRatio = Math.round(indoorFactor * purifierFactor * 100) / 100;
+  const effectiveConcentration = outdoorPm25 * (0.85 * effectiveRatio + 0.15);
 
-  return Math.round(effectiveConcentration * DAILY_BREATHING_VOLUME_M3);
+  return {
+    baselineDailyExposureUg: Math.round(effectiveConcentration * DAILY_BREATHING_VOLUME_M3),
+    infiltrationRatio: effectiveRatio,
+    calibratedBySensor: false,
+  };
+}
+
+export function computeBaselineDailyExposureUg(
+  outdoorPm25: number,
+  housingType: HousingType,
+  hasAirPurifier: boolean,
+  measuredIndoorPm25?: number | null
+): number {
+  return computeCalibratedBaselineExposure(
+    outdoorPm25,
+    housingType,
+    hasAirPurifier,
+    measuredIndoorPm25
+  ).baselineDailyExposureUg;
+}
+
+/**
+ * Blends modeled outdoor PM2.5 with nearby verified ground stations using inverse-distance weighting
+ * when ground sensors are available within 25 km.
+ */
+export function computeBlendedGroundPm25(
+  modeledPm25: number,
+  groundStations: GroundStationReading[]
+): { blendedPm25: number; stationCount: number } {
+  if (!groundStations.length) {
+    return { blendedPm25: modeledPm25, stationCount: 0 };
+  }
+
+  let weightedSum = modeledPm25 * 0.5;
+  let totalWeight = 0.5;
+
+  for (const st of groundStations.slice(0, 5)) {
+    const w = 1 / Math.max(1, st.distanceKm);
+    weightedSum += st.pm25 * w;
+    totalWeight += w;
+  }
+
+  return {
+    blendedPm25: Math.round((weightedSum / totalWeight) * 10) / 10,
+    stationCount: groundStations.length,
+  };
 }
 
 export interface AggregatedImpact {
@@ -172,11 +243,6 @@ export interface AggregatedImpact {
   communityCo2eAvoidedTonsMonth: number;
 }
 
-/**
- * Combines adopted recommendations using diminishing-returns multiplication for exposure
- * reduction (so stacking 3 actions never claims an unrealistic >100% reduction) and
- * linear sums for prevented emissions, scaled across household/community adoption.
- */
 export function combineAdoptedImpacts(
   baselineDailyExposureUg: number,
   adoptedActions: ActionRecommendation[],
@@ -205,14 +271,11 @@ export function combineAdoptedImpacts(
   const safeHouseholdSize = Math.max(1, householdSize);
 
   const monthlyCo2eAvoidedKg = Math.round(co2eAvoidedKgDay * 30 * 10) / 10;
-  // Community PM2.5+NOx emissions avoided in kg/month
   const communityPm25AvoidedKgMonth =
     Math.round(((noxPmEmissionsAvoidedGDay * 30 * safeHouseholds) / 1000) * 10) / 10;
   const communityCo2eAvoidedTonsMonth =
     Math.round(((co2eAvoidedKgDay * 30 * safeHouseholds) / 1000) * 100) / 100;
 
-  // Incorporate household size only for per-household personal dose awareness in UI;
-  // per-person baseline remains clear and normalized.
   void safeHouseholdSize;
 
   return {

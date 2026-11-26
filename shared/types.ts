@@ -8,6 +8,8 @@ export type AqiCategory =
 
 export type InversionRisk = 'low' | 'moderate' | 'high' | 'severe';
 
+export type SupportedLanguage = 'en' | 'ur' | 'hi' | 'pl' | 'es';
+
 export interface HourlyAirPoint {
   time: string;
   hourLabel: string;
@@ -24,6 +26,16 @@ export interface VentilationWindow {
   avgAqi: number;
   avgPm25: number;
   reason: string;
+}
+
+export interface GroundStationReading {
+  id: string;
+  name: string;
+  provider: 'sensor-community' | 'openaq' | 'purpleair';
+  distanceKm: number;
+  pm25: number;
+  pm10?: number;
+  observedAt: string;
 }
 
 export interface AirQualitySnapshot {
@@ -49,6 +61,7 @@ export interface AirQualitySnapshot {
     observedAt: string;
     source: 'open-meteo' | 'preset-fallback';
   };
+  groundStations: GroundStationReading[];
   hourly: HourlyAirPoint[];
   bestVentilationWindow: VentilationWindow | null;
 }
@@ -93,7 +106,16 @@ export interface LifestyleProfile {
   commuteMode: CommuteMode;
   dailyCarKm: number;
   hasAirPurifier: boolean;
+  measuredIndoorPm25?: number | null;
   localChallenges: string;
+}
+
+export interface SavedHouseholdProfile {
+  id: string;
+  name: string;
+  profile: LifestyleProfile;
+  adoptedIds: string[];
+  updatedAt: string;
 }
 
 export type ActionCategory = 'daily_routine' | 'indoor_iaq' | 'sustainable_alt';
@@ -127,6 +149,8 @@ export interface ActionPlanResponse {
   situationBrief: string;
   alertLevel: 'normal' | 'elevated' | 'severe' | 'emergency';
   baselineDailyExposureUg: number;
+  infiltrationRatio: number;
+  exposureCalibratedBySensor: boolean;
   recommendations: ActionRecommendation[];
 }
 
@@ -156,4 +180,47 @@ export interface PresetCity {
   longitude: number;
   timezone: string;
   note: string;
+}
+
+export interface SmogAlertSubscription {
+  id: string;
+  label: string;
+  locationName: string;
+  latitude: number;
+  longitude: number;
+  aqiThreshold: number;
+  alertOnInversion: boolean;
+  morningTime: string;
+  channel: 'browser' | 'email_digest';
+  contact?: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface AlertEvaluationResult {
+  subscription: SmogAlertSubscription;
+  triggered: boolean;
+  reasons: string[];
+  currentAqi: number;
+  inversionRisk: InversionRisk;
+}
+
+export type PledgeCategory =
+  | 'no_idling_school'
+  | 'merv13_coop'
+  | 'zero_burning'
+  | 'clean_air_refuge';
+
+export interface CommunityPledge {
+  id: string;
+  category: PledgeCategory;
+  title: string;
+  description: string;
+  city: string;
+  organizer: string;
+  targetHouseholds: number;
+  joinedHouseholds: number;
+  co2eSavedKgPerHouseholdDay: number;
+  noxPmSavedGPerHouseholdDay: number;
+  createdAt: string;
 }

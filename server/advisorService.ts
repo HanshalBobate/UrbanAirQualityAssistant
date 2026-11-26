@@ -5,10 +5,30 @@ import type {
   AirQualitySnapshot,
   ChatMessage,
   LifestyleProfile,
+  SupportedLanguage,
 } from '../shared/types.js';
-import { computeBaselineDailyExposureUg } from '../shared/impactMath.js';
+import {
+  computeBlendedGroundPm25,
+  computeCalibratedBaselineExposure,
+} from '../shared/impactMath.js';
 
 const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+const LANGUAGE_NAMES: Record<SupportedLanguage, string> = {
+  en: 'English',
+  ur: 'Urdu (اردو)',
+  hi: 'Hindi (हिन्दी)',
+  pl: 'Polish (Polski)',
+  es: 'Spanish (Español)',
+};
+
+const BRIEF_TEMPLATES: Record<SupportedLanguage, string> = {
+  en: '',
+  ur: 'اردو خلاصہ: ',
+  hi: 'हिन्दी सारांश: ',
+  pl: 'Podsumowanie (PL): ',
+  es: 'Resumen (ES): ',
+};
 
 function getAlertLevel(usAqi: number): ActionPlanResponse['alertLevel'] {
   if (usAqi >= 250) return 'emergency';
@@ -59,20 +79,22 @@ function clampImpact(
   };
 }
 
-/**
- * Deterministic, location- and profile-aware advisory fallback when no Gemini API key is configured.
- * Uses real-time AQI, inversion conditions, ventilation windows, and household parameters.
- */
 export function buildLocalActionPlan(
   air: AirQualitySnapshot,
-  profile: LifestyleProfile
+  profile: LifestyleProfile,
+  language: SupportedLanguage = 'en'
 ): ActionPlanResponse {
-  const { current, bestVentilationWindow, locationName } = air;
-  const baselineExposureUg = computeBaselineDailyExposureUg(
-    current.pm25,
+  const { current, bestVentilationWindow, locationName, groundStations } = air;
+  const blended = computeBlendedGroundPm25(current.pm25, groundStations ?? []);
+  const effectiveOutdoorPm25 = blended.blendedPm25;
+
+  const baselineInfo = computeCalibratedBaselineExposure(
+    effectiveOutdoorPm25,
     profile.housingType,
-    profile.hasAirPurifier
+    profile.hasAirPurifier,
+    profile.measuredIndoorPm25
   );
+  const baselineExposureUg = baselineInfo.baselineDailyExposureUg;
   const alertLevel = getAlertLevel(current.usAqi);
   const sensitivityText = formatSensitivities(profile);
   const isSevere = current.usAqi >= 151;
@@ -92,7 +114,9 @@ export function buildLocalActionPlan(
     summary: isSevere
       ? `Avoid morning and post-sunset cold traps in ${locationName}; move unavoidable errands to the afternoon mixing window and move exercise indoors.`
       : `Schedule outdoor play, dog walks, or errands during the afternoon dispersal dip when boundary-layer mixing lowers street-level PM2.5.`,
-    tailoredWhy: `${locationName} currently sits at AQI ${current.usAqi} (PM2.5 ${current.pm25} µg/m³) with ${current.inversionRisk} thermal inversion risk (${current.windSpeedKmh} km/h wind, ${current.temperatureC}°C). Protecting ${sensitivityText} requires avoiding peak morning/evening stagnation.`,
+    tailoredWhy: `${locationName} sits at AQI ${current.usAqi} (effective outdoor PM2.5 ${effectiveOutdoorPm25} µg/m³${
+      blended.stationCount > 0 ? ` blended with ${blended.stationCount} local ground sensors` : ''
+    }) with ${current.inversionRisk} thermal inversion risk (${current.windSpeedKmh} km/h wind, ${current.temperatureC}°C). Protecting ${sensitivityText} requires avoiding peak morning/evening stagnation.`,
     steps: [
       bestVentilationWindow
         ? `Target essential outdoor trips between ${bestVentilationWindow.startHour} and ${bestVentilationWindow.endHour}.`
@@ -160,9 +184,9 @@ export function buildLocalActionPlan(
         : `Protect Sensitive Lungs (${sensitivityText}) Outdoors`,
     summary:
       profile.mode === 'community'
-        ? 'Distribute morning AQI SMS/WhatsApp alerts and move community gatherings or youth sports indoors whenever AQI > 150.'
+        ? 'Distribute morning AQI alerts and move community gatherings or youth sports indoors whenever AQI > 150.'
         : 'Keep fitted N95/KF94 respirators by the door and run a 2-minute nasal saline / jacket-off routine after returning home.',
-    tailoredWhy: `Tailored for ${sensitivityText}: fine PM2.5 (${current.pm25} µg/m³) penetrates deep into alveoli and worsens airway inflammation during cold winter air.`,
+    tailoredWhy: `Tailored for ${sensitivityText}: fine PM2.5 (${effectiveOutdoorPm25} µg/m³) penetrates deep into alveoli and worsens airway inflammation during cold winter air.`,
     steps: [
       'Stage N95/KN95/KF94 masks (child-sized if applicable) in coat pockets and school backpacks.',
       'Switch car climate control to Recirculate mode during traffic delays to reduce cabin PM2.5 by ~60%.',
@@ -192,7 +216,9 @@ export function buildLocalActionPlan(
     summary: needsPurifier
       ? 'Tape four 20×20" MERV-13 furnace filters to a 20" box fan with a cardboard shroud to rival a $300 HEPA purifier.'
       : 'Concentrate your existing purifier in the main bedroom overnight on Medium-High with the door closed to guarantee 8+ hours of clean lung recovery.',
-    tailoredWhy: `In ${profile.housingType.replace(/_/g, ' ')} housing during AQI ${current.usAqi}, outdoor PM2.5 infiltrates indoors at 45–75% of street levels—meaning sleeping air still carries heavy smog without active filtration.`,
+    tailoredWhy: baselineInfo.calibratedBySensor
+      ? `Your indoor sensor shows ${profile.measuredIndoorPm25} µg/m³ (I/O infiltration ratio ${baselineInfo.infiltrationRatio}), proving outdoor smog is entering indoors—active filtration directly slashes this sleeping dose.`
+      : `In ${profile.housingType.replace(/_/g, ' ')} housing during AQI ${current.usAqi}, outdoor PM2.5 infiltrates indoors at ~${Math.round(baselineInfo.infiltrationRatio * 100)}% of street levels without dedicated filtration.`,
     steps: needsPurifier
       ? [
           'Source four MERV-13 (or F7/ePM1) pleated filters and one 20-inch box fan + duct tape.',
@@ -224,7 +250,7 @@ export function buildLocalActionPlan(
     title: 'Weatherstrip Drafty Sashes & Run Damp-Dust Protocol',
     summary:
       'Seal winter window leaks with removable foam tape/door sweeps and wet-mop floors so settled indoor soot never gets kicked back into the air.',
-    tailoredWhy: `${profile.housingType === 'older_drafty_home' ? 'Older/drafty buildings leak up to 72% of outdoor smog indoors' : 'Winter pressure differences pull cold smoggy air through window and door gaps'} when wind is ${current.windSpeedKmh} km/h.`,
+    tailoredWhy: `${profile.housingType === 'older_drafty_home' ? 'Older/drafty buildings leak up to 72% of outdoor smog indoors' : 'Winter pressure differences pull cold smoggy air through window and door gaps'} (current I/O ratio: ${baselineInfo.infiltrationRatio}).`,
     steps: [
       'Press removable V-strip or foam weatherstripping along leaky bedroom window sashes and place a rolled towel/door sweep under exterior doors.',
       bestVentilationWindow && bestVentilationWindow.avgAqi <= 125
@@ -305,7 +331,7 @@ export function buildLocalActionPlan(
         : 'Bleed radiators / clean heat-pump filters to maintain peak winter efficiency.',
       'Explore utility rebates for cold-climate heat pumps or community clean-heating grants.',
     ],
-    effort: isSolidFuelHeat ? 'habit_shift' : 'habit_shift',
+    effort: 'habit_shift',
     costEstimate: isSolidFuelHeat ? '~$1–3/day electric offset' : 'Saves ~$18–35/mo',
     directImpact: {
       exposureReductionPct: isSolidFuelHeat ? 30 : 6,
@@ -387,7 +413,14 @@ export function buildLocalActionPlan(
     },
   });
 
-  const situationBrief = `${locationName} is experiencing ${current.aqiCategory} air quality (US AQI ${current.usAqi}, PM2.5 ${current.pm25} µg/m³) with ${current.inversionRisk} thermal inversion risk. ${current.inversionReason} ${
+  const prefix = BRIEF_TEMPLATES[language] ?? '';
+  const situationBrief = `${prefix}${locationName} is experiencing ${current.aqiCategory} air quality (US AQI ${current.usAqi}, outdoor PM2.5 ${effectiveOutdoorPm25} µg/m³${
+    blended.stationCount > 0 ? ` across ${blended.stationCount} nearby ground sensors` : ''
+  }) with ${current.inversionRisk} thermal inversion risk. ${current.inversionReason} ${
+    baselineInfo.calibratedBySensor
+      ? `Calibrated to your indoor sensor (${profile.measuredIndoorPm25} µg/m³, I/O ratio ${baselineInfo.infiltrationRatio}). `
+      : ''
+  }${
     bestVentilationWindow
       ? `Your cleanest 3-hour window today is ${bestVentilationWindow.startHour}–${bestVentilationWindow.endHour} (avg AQI ${bestVentilationWindow.avgAqi}).`
       : ''
@@ -402,6 +435,8 @@ export function buildLocalActionPlan(
     situationBrief,
     alertLevel,
     baselineDailyExposureUg: baselineExposureUg,
+    infiltrationRatio: baselineInfo.infiltrationRatio,
+    exposureCalibratedBySensor: baselineInfo.calibratedBySensor,
     recommendations: recs.map((r) => clampImpact(r, baselineExposureUg)),
   };
 }
@@ -476,27 +511,35 @@ const RECOMMENDATION_SCHEMA = {
 export async function generateActionPlan(
   air: AirQualitySnapshot,
   profile: LifestyleProfile,
-  apiKeyOverride?: string
+  apiKeyOverride?: string,
+  language: SupportedLanguage = 'en'
 ): Promise<ActionPlanResponse> {
   const apiKey = (apiKeyOverride || process.env.GEMINI_API_KEY || '').trim();
-  const baselineExposureUg = computeBaselineDailyExposureUg(
-    air.current.pm25,
+  const blended = computeBlendedGroundPm25(air.current.pm25, air.groundStations ?? []);
+  const baselineInfo = computeCalibratedBaselineExposure(
+    blended.blendedPm25,
     profile.housingType,
-    profile.hasAirPurifier
+    profile.hasAirPurifier,
+    profile.measuredIndoorPm25
   );
+  const baselineExposureUg = baselineInfo.baselineDailyExposureUg;
 
   if (!apiKey) {
-    return buildLocalActionPlan(air, profile);
+    return buildLocalActionPlan(air, profile, language);
   }
 
   try {
     const ai = new GoogleGenAI({ apiKey });
+    const targetLang = LANGUAGE_NAMES[language] ?? 'English';
     const prompt = `You are ClearAir AI, an environmental health & sustainable living advisor helping families and communities navigate severe winter smog and urban air pollution.
+
+OUTPUT LANGUAGE: Write ALL user-facing text fields (situationBrief, title, summary, tailoredWhy, steps, costEstimate, explanation, communityMultiplierNote) naturally in ${targetLang}. Keep JSON keys and enum values ("daily_routine", "indoor_iaq", "sustainable_alt", "quick_win", "habit_shift", "upgrade") strictly in English.
 
 LOCATION & LIVE AIR QUALITY:
 - City: ${air.locationName}, ${air.country} (Lat ${air.latitude.toFixed(2)}, Lon ${air.longitude.toFixed(2)})
 - US AQI: ${air.current.usAqi} (${air.current.aqiCategory})
-- PM2.5: ${air.current.pm25} µg/m³, PM10: ${air.current.pm10} µg/m³, NO2: ${air.current.no2} µg/m³, O3: ${air.current.o3} µg/m³
+- Modeled PM2.5: ${air.current.pm25} µg/m³ | Ground-blended PM2.5: ${blended.blendedPm25} µg/m³ (${blended.stationCount} nearby sensors)
+- PM10: ${air.current.pm10} µg/m³, NO2: ${air.current.no2} µg/m³, O3: ${air.current.o3} µg/m³
 - Weather: ${air.current.temperatureC}°C, ${air.current.humidityPct}% humidity, ${air.current.windSpeedKmh} km/h wind
 - Thermal Inversion Risk: ${air.current.inversionRisk} (${air.current.inversionReason})
 - Best 3-hour window in next 24h: ${
@@ -504,7 +547,9 @@ LOCATION & LIVE AIR QUALITY:
         ? `${air.bestVentilationWindow.startHour}–${air.bestVentilationWindow.endHour} (avg AQI ${air.bestVentilationWindow.avgAqi})`
         : 'Unavailable'
     }
-- Baseline daily inhaled PM2.5 estimate: ${baselineExposureUg} µg/person/day
+- Baseline daily inhaled PM2.5 estimate: ${baselineExposureUg} µg/person/day (I/O ratio: ${baselineInfo.infiltrationRatio}, sensor-calibrated: ${baselineInfo.calibratedBySensor}${
+      baselineInfo.calibratedBySensor ? `, measured indoor PM2.5: ${profile.measuredIndoorPm25} µg/m³` : ''
+    })
 
 HOUSEHOLD / COMMUNITY PROFILE:
 - Mode: ${profile.mode} (${profile.householdSize} ${profile.mode === 'community' ? 'households' : 'people'})
@@ -521,7 +566,7 @@ Generate exactly 9 tailored, practical, scientifically accurate recommendations:
 - 3 with category "sustainable_alt" (sustainable alternatives & community-scale emission cuts)
 
 REQUIREMENTS:
-- Reference the exact city, AQI/PM2.5, inversion risk, best hourly window, and user's specific housing/heating/cooking/commute/sensitivities.
+- Reference the exact city, AQI/PM2.5, inversion risk, best hourly window, indoor sensor calibration if present, and user's specific housing/heating/cooking/commute/sensitivities.
 - Keep numerical directImpact realistic:
   - exposureReductionPct between 5 and 70 per action
   - pm25AvoidedUgDay proportional to baseline ${baselineExposureUg} µg/day
@@ -561,6 +606,8 @@ REQUIREMENTS:
       situationBrief: parsed.situationBrief,
       alertLevel: getAlertLevel(air.current.usAqi),
       baselineDailyExposureUg: baselineExposureUg,
+      infiltrationRatio: baselineInfo.infiltrationRatio,
+      exposureCalibratedBySensor: baselineInfo.calibratedBySensor,
       recommendations: parsed.recommendations.map((r, idx) =>
         clampImpact(
           {
@@ -573,7 +620,7 @@ REQUIREMENTS:
     };
   } catch (err) {
     console.warn('Gemini generation fell back to local advisor:', (err as Error).message);
-    return buildLocalActionPlan(air, profile);
+    return buildLocalActionPlan(air, profile, language);
   }
 }
 
@@ -584,9 +631,19 @@ export async function askAdvisorChat(params: {
   adoptedTitles: string[];
   history: ChatMessage[];
   apiKeyOverride?: string;
+  language?: SupportedLanguage;
 }): Promise<{ reply: string; engine: 'gemini-live' | 'local-advisor' }> {
-  const { question, air, profile, adoptedTitles, history, apiKeyOverride } = params;
+  const {
+    question,
+    air,
+    profile,
+    adoptedTitles,
+    history,
+    apiKeyOverride,
+    language = 'en',
+  } = params;
   const apiKey = (apiKeyOverride || process.env.GEMINI_API_KEY || '').trim();
+  const targetLang = LANGUAGE_NAMES[language] ?? 'English';
 
   if (apiKey) {
     try {
@@ -597,11 +654,12 @@ export async function askAdvisorChat(params: {
         .join('\n');
 
       const prompt = `You are ClearAir AI, a concise, empathetic, evidence-based air quality & sustainable living advisor.
+Reply strictly in ${targetLang}.
 Current Context:
-- City: ${air.locationName}, ${air.country} | US AQI: ${air.current.usAqi} (${air.current.aqiCategory}) | PM2.5: ${air.current.pm25} µg/m³ | NO2: ${air.current.no2} µg/m³
+- City: ${air.locationName}, ${air.country} | US AQI: ${air.current.usAqi} (${air.current.aqiCategory}) | PM2.5: ${air.current.pm25} µg/m³ | NO2: ${air.current.no2} µg/m³ | Ground sensors nearby: ${air.groundStations?.length ?? 0}
 - Weather & Inversion: ${air.current.temperatureC}°C, ${air.current.windSpeedKmh} km/h wind, inversion risk: ${air.current.inversionRisk}
 - Best 3h window: ${air.bestVentilationWindow ? `${air.bestVentilationWindow.startHour}-${air.bestVentilationWindow.endHour} (avg AQI ${air.bestVentilationWindow.avgAqi})` : 'N/A'}
-- Household/Community: ${profile.mode}, sensitivities: ${formatSensitivities(profile)}, housing: ${profile.housingType}, heating: ${profile.heatingSource}, cooking: ${profile.cookingFuel}, commute: ${profile.commuteMode}, hasPurifier: ${profile.hasAirPurifier}
+- Household/Community: ${profile.mode}, sensitivities: ${formatSensitivities(profile)}, housing: ${profile.housingType}, measured indoor PM2.5: ${profile.measuredIndoorPm25 ?? 'not provided'}, heating: ${profile.heatingSource}, cooking: ${profile.cookingFuel}, commute: ${profile.commuteMode}, hasPurifier: ${profile.hasAirPurifier}
 - Actions already adopted today: ${adoptedTitles.length ? adoptedTitles.join('; ') : 'None yet'}
 
 Conversation so far:
@@ -625,7 +683,6 @@ Respond in clear, structured markdown (short paragraphs or 3-5 bullet points). E
     }
   }
 
-  // Contextual local advisor chat fallback
   const q = question.toLowerCase();
   const win = air.bestVentilationWindow;
   const lines: string[] = [];
@@ -648,7 +705,11 @@ Respond in clear, structured markdown (short paragraphs or 3-5 bullet points). E
     );
   } else if (q.includes('diy') || q.includes('corsi') || q.includes('purifier') || q.includes('filter') || q.includes('indoor')) {
     lines.push(
-      `For your **${profile.housingType.replace(/_/g, ' ')}**, a DIY **Corsi-Rosenthal Box** (~$50–65) is the highest-impact indoor upgrade:`
+      `For your **${profile.housingType.replace(/_/g, ' ')}**${
+        profile.measuredIndoorPm25 != null
+          ? ` (measured indoor PM2.5: **${profile.measuredIndoorPm25} µg/m³**)`
+          : ''
+      }, a DIY **Corsi-Rosenthal Box** (~$50–65) is the highest-impact indoor upgrade:`
     );
     lines.push(
       `- **How to build:** Tape four 20×20" MERV-13 filters into a cube with a cardboard floor and a 20" box fan taped on top (add an inner cardboard shroud so air doesn't backflow at the corners).`
@@ -683,7 +744,7 @@ Respond in clear, structured markdown (short paragraphs or 3-5 bullet points). E
       `- **Direct impact:** ${adoptedTitles.length > 0 ? `Your ${adoptedTitles.length} adopted actions are already actively lowering exposure and emissions.` : 'Adopt 2–3 actions in the dashboard to see your exact µg/day PM2.5 and kg CO₂e reduction.'}`
     );
     lines.push(
-      `\n*Tip: Add a free Gemini API key in Settings (top-right) for unrestricted live GenAI conversation.*`
+      `\n*Tip: Add a free Gemini API key in Settings (top-right) for unrestricted live GenAI replies in ${targetLang}.*`
     );
   }
 

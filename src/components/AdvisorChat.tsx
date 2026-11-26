@@ -1,13 +1,21 @@
 import { useState } from 'react';
 import { Bot, Send, User } from 'lucide-react';
-import type { AirQualitySnapshot, ChatMessage, LifestyleProfile } from '@shared/types';
+import type {
+  AirQualitySnapshot,
+  ChatMessage,
+  LifestyleProfile,
+  SupportedLanguage,
+} from '@shared/types';
 import { sendAdvisorChat } from '../api';
+import type { TranslationStrings } from '../i18n/translations';
 
 interface AdvisorChatProps {
   airQuality: AirQualitySnapshot | null;
   profile: LifestyleProfile;
   adoptedTitles: string[];
   apiKey?: string;
+  language: SupportedLanguage;
+  t: TranslationStrings;
 }
 
 const STARTER_PROMPTS = [
@@ -22,6 +30,8 @@ export function AdvisorChat({
   profile,
   adoptedTitles,
   apiKey,
+  language,
+  t,
 }: AdvisorChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -50,6 +60,7 @@ export function AdvisorChat({
         adoptedTitles,
         history: messages,
         apiKey,
+        language,
       });
 
       const assistantMsg: ChatMessage = {
@@ -82,7 +93,7 @@ export function AdvisorChat({
             <Bot className="h-4 w-4" />
           </div>
           <div>
-            <h2 className="text-base font-bold text-slate-900">Ask ClearAir GenAI Advisor</h2>
+            <h2 className="text-base font-bold text-slate-900">{t.askAdvisorTitle}</h2>
             <p className="text-xs text-slate-500">
               Context-aware Q&A for {airQuality?.locationName ?? 'your city'} (AQI{' '}
               {airQuality?.current.usAqi ?? '—'}) and your household profile
@@ -162,7 +173,7 @@ export function AdvisorChat({
           className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-xs transition hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Send className="h-4 w-4" />
-          Ask
+          {t.askButton}
         </button>
       </form>
     </section>

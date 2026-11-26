@@ -1,6 +1,7 @@
 import type {
   AirQualitySnapshot,
   CitySearchResult,
+  GroundStationReading,
   HourlyAirPoint,
   PresetCity,
 } from '../shared/types.js';
@@ -105,6 +106,173 @@ function formatHourLabel(isoTime: string): string {
   return `${h - 12} PM`;
 }
 
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
+}
+
+/**
+ * Fetches nearby physical ground-station PM2.5 sensors using:
+ * 1) Sensor.Community (keyless public citizen-science network)
+ * 2) OpenAQ v3 (when OPENAQ_API_KEY is configured)
+ * 3) PurpleAir (when PURPLEAIR_API_KEY is configured)
+ */
+export async function fetchNearbyGroundStations(
+  latitude: number,
+  longitude: number
+): Promise<GroundStationReading[]> {
+  const stations: GroundStationReading[] = [];
+
+  // 1. Sensor.Community keyless public area lookup (25 km radius)
+  try {
+    const scUrl = `https://data.sensor.community/airrohr/v1/filter/area=${latitude.toFixed(
+      4
+    )},${longitude.toFixed(4)},25`;
+    const res = await fetch(scUrl, {
+      headers: { 'User-Agent': 'ClearAirAI/1.0 (urban-air-quality-assistant)' },
+      signal: AbortSignal.timeout(4500),
+    });
+    if (res.ok) {
+      const items = (await res.json()) as Array<{
+        id: number;
+        timestamp: string;
+        location?: { id: number; latitude?: string; longitude?: string; country?: string };
+        sensordatavalues?: Array<{ value_type: string; value: string }>;
+      }>;
+
+      const seenLocations = new Set<number>();
+      for (const item of items) {
+        const locId = item.location?.id;
+        if (!locId || seenLocations.has(locId)) continue;
+        const p2 = item.sensordatavalues?.find((v) => v.value_type === 'P2');
+        const p1 = item.sensordatavalues?.find((v) => v.value_type === 'P1');
+        const pm25 = p2 ? Number(p2.value) : NaN;
+        if (!Number.isFinite(pm25) || pm25 < 0 || pm25 > 1200) continue;
+
+        const stLat = Number(item.location?.latitude ?? latitude);
+        const stLon = Number(item.location?.longitude ?? longitude);
+        seenLocations.add(locId);
+
+        stations.push({
+          id: `sc-${locId}`,
+          name: `Sensor.Community #${locId}`,
+          provider: 'sensor-community',
+          distanceKm: haversineKm(latitude, longitude, stLat, stLon),
+          pm25: Math.round(pm25 * 10) / 10,
+          pm10: p1 && Number.isFinite(Number(p1.value)) ? Math.round(Number(p1.value) * 10) / 10 : undefined,
+          observedAt: item.timestamp,
+        });
+        if (stations.length >= 6) break;
+      }
+    }
+  } catch {
+    // Graceful skip if Sensor.Community is unreachable or slow
+  }
+
+  // 2. OpenAQ v3 (if OPENAQ_API_KEY is configured)
+  const openAqKey = (process.env.OPENAQ_API_KEY || '').trim();
+  if (openAqKey) {
+    try {
+      const url = new URL('https://api.openaq.org/v3/locations');
+      url.searchParams.set('coordinates', `${latitude.toFixed(4)},${longitude.toFixed(4)}`);
+      url.searchParams.set('radius', '25000');
+      url.searchParams.set('limit', '5');
+      url.searchParams.set('parameters_id', '2'); // PM2.5
+      const res = await fetch(url, {
+        headers: { 'X-API-Key': openAqKey },
+        signal: AbortSignal.timeout(4500),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          results?: Array<{
+            id: number;
+            name?: string;
+            distance?: number;
+            coordinates?: { latitude: number; longitude: number };
+            datetimeLast?: { utc?: string };
+            sensors?: Array<{
+              parameter?: { name?: string };
+              latest?: { value?: number };
+            }>;
+          }>;
+        };
+        for (const loc of data.results ?? []) {
+          const pmSensor = loc.sensors?.find(
+            (s) => s.parameter?.name?.toLowerCase() === 'pm25' && typeof s.latest?.value === 'number'
+          );
+          if (!pmSensor || typeof pmSensor.latest?.value !== 'number') continue;
+          stations.push({
+            id: `openaq-${loc.id}`,
+            name: loc.name || `OpenAQ #${loc.id}`,
+            provider: 'openaq',
+            distanceKm: loc.distance
+              ? Math.round((loc.distance / 1000) * 10) / 10
+              : haversineKm(
+                  latitude,
+                  longitude,
+                  loc.coordinates?.latitude ?? latitude,
+                  loc.coordinates?.longitude ?? longitude
+                ),
+            pm25: Math.round(pmSensor.latest.value * 10) / 10,
+            observedAt: loc.datetimeLast?.utc ?? new Date().toISOString(),
+          });
+        }
+      }
+    } catch {
+      // Graceful skip
+    }
+  }
+
+  // 3. PurpleAir (if PURPLEAIR_API_KEY is configured)
+  const purpleAirKey = (process.env.PURPLEAIR_API_KEY || '').trim();
+  if (purpleAirKey) {
+    try {
+      const delta = 0.22; // ~24 km bounding box
+      const url = new URL('https://api.purpleair.com/v1/sensors');
+      url.searchParams.set('fields', 'name,latitude,longitude,pm2.5_10minute,last_seen');
+      url.searchParams.set('location_type', '0'); // outdoor
+      url.searchParams.set('nwlat', String(latitude + delta));
+      url.searchParams.set('nwlng', String(longitude - delta));
+      url.searchParams.set('selat', String(latitude - delta));
+      url.searchParams.set('selng', String(longitude + delta));
+
+      const res = await fetch(url, {
+        headers: { 'X-API-Key': purpleAirKey },
+        signal: AbortSignal.timeout(4500),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          fields?: string[];
+          data?: Array<Array<string | number>>;
+        };
+        for (const row of (data.data ?? []).slice(0, 5)) {
+          const [sensorId, sensorName, stLat, stLon, pm25Val, lastSeen] = row;
+          const pm25 = Number(pm25Val);
+          if (!Number.isFinite(pm25)) continue;
+          stations.push({
+            id: `pa-${sensorId}`,
+            name: String(sensorName || `PurpleAir #${sensorId}`),
+            provider: 'purpleair',
+            distanceKm: haversineKm(latitude, longitude, Number(stLat), Number(stLon)),
+            pm25: Math.round(pm25 * 10) / 10,
+            observedAt: lastSeen ? new Date(Number(lastSeen) * 1000).toISOString() : new Date().toISOString(),
+          });
+        }
+      }
+    } catch {
+      // Graceful skip
+    }
+  }
+
+  return stations.sort((a, b) => a.distanceKm - b.distanceKm).slice(0, 8);
+}
+
 export function buildFallbackSnapshot(
   name: string,
   country: string,
@@ -131,7 +299,6 @@ export function buildFallbackSnapshot(
   for (let offset = 0; offset < 24; offset++) {
     const dt = new Date(now.getTime() + offset * 3600 * 1000);
     const hour = dt.getHours();
-    // Typical winter diurnal inversion curve: higher morning/late-night, lower 13:00-16:00
     const afternoonBreak = hour >= 12 && hour <= 16 ? 0.62 : hour >= 20 || hour <= 8 ? 1.18 : 0.92;
     const pm25 = Math.round(base.pm25 * afternoonBreak * 10) / 10;
     const usAqi = pm25ToUsAqi(pm25);
@@ -176,6 +343,7 @@ export function buildFallbackSnapshot(
       observedAt: now.toISOString(),
       source: 'preset-fallback',
     },
+    groundStations: [],
     hourly,
     bestVentilationWindow: findBestVentilationWindow(hourly),
   };
@@ -267,9 +435,10 @@ export async function fetchAirQualitySnapshot(params: {
     wxUrl.searchParams.set('forecast_days', '2');
     wxUrl.searchParams.set('timezone', 'auto');
 
-    const [aqRes, wxRes] = await Promise.all([
+    const [aqRes, wxRes, groundStations] = await Promise.all([
       fetch(aqUrl, { signal: AbortSignal.timeout(6000) }),
       fetch(wxUrl, { signal: AbortSignal.timeout(6000) }),
+      fetchNearbyGroundStations(latitude, longitude),
     ]);
 
     if (!aqRes.ok || !wxRes.ok) {
@@ -365,6 +534,7 @@ export async function fetchAirQualitySnapshot(params: {
         observedAt: currentTime || new Date().toISOString(),
         source: 'open-meteo',
       },
+      groundStations,
       hourly,
       bestVentilationWindow: findBestVentilationWindow(hourly),
     };

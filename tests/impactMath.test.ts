@@ -4,10 +4,12 @@ import {
   classifyUsAqi,
   combineAdoptedImpacts,
   computeBaselineDailyExposureUg,
+  computeBlendedGroundPm25,
+  computeCalibratedBaselineExposure,
   findBestVentilationWindow,
   pm25ToUsAqi,
 } from '../shared/impactMath.js';
-import type { ActionRecommendation, HourlyAirPoint } from '../shared/types.js';
+import type { ActionRecommendation, GroundStationReading, HourlyAirPoint } from '../shared/types.js';
 
 describe('impactMath', () => {
   it('classifies US AQI categories accurately across breakpoints', () => {
@@ -49,6 +51,23 @@ describe('impactMath', () => {
     expect(best?.startHour).toBe('1 PM');
     expect(best?.endHour).toBe('3 PM');
     expect(best?.avgAqi).toBe(84);
+  });
+
+  it('calibrates exposure baseline using real indoor PM2.5 monitor and blends nearby ground stations', () => {
+    const calibrated = computeCalibratedBaselineExposure(100, 'older_drafty_home', false, 25);
+    expect(calibrated.calibratedBySensor).toBe(true);
+    expect(calibrated.infiltrationRatio).toBe(0.25);
+    // (0.85 * 25 + 0.15 * 100) * 15 = 36.25 * 15 = 544
+    expect(calibrated.baselineDailyExposureUg).toBe(544);
+
+    const stations: GroundStationReading[] = [
+      { id: 's1', name: 'Station A', provider: 'sensor-community', distanceKm: 1.5, pm25: 120, observedAt: '' },
+      { id: 's2', name: 'Station B', provider: 'openaq', distanceKm: 6.0, pm25: 90, observedAt: '' },
+    ];
+    const blended = computeBlendedGroundPm25(80, stations);
+    expect(blended.stationCount).toBe(2);
+    expect(blended.blendedPm25).toBeGreaterThan(95);
+    expect(blended.blendedPm25).toBeLessThan(120);
   });
 
   it('computes baseline exposure and stacks adopted actions with diminishing returns', () => {
@@ -113,7 +132,6 @@ describe('impactMath', () => {
       },
     ];
 
-    // 1 - (1-0.58)*(1-0.28)*(1-0.30) = 1 - 0.42*0.72*0.70 = 78.8% -> 79% (never >100%)
     const combined = combineAdoptedImpacts(1000, mockRecs, 4, 100);
     expect(combined.combinedExposureReductionPct).toBe(79);
     expect(combined.projectedDailyExposureUg).toBe(210);

@@ -4,17 +4,21 @@ A GenAI-powered assistant helping families and communities navigate severe winte
 
 ## Features
 
-- **Live Air Quality & Thermal Inversion Telemetry** (`server/airQualityService.ts`):
+- **Live Air Quality, Ground Stations & Thermal Inversion Telemetry** (`server/airQualityService.ts`):
   - City search & winter smog presets powered by Open-Meteo Geocoding, Air Quality, and Weather APIs (with automatic offline preset fallback).
-  - Evaluates thermal inversion risk from surface wind speed, temperature, humidity, and PM2.5, and identifies the cleanest 3-hour rolling ventilation/errand window over the next 24 hours.
-- **Household & Community Lifestyle Profiling** (`src/components/LifestyleForm.tsx`):
-  - Tailors recommendations for **Family Homes** or **Community / School Groups**, accounting for sensitive groups (infants/toddlers, asthma/respiratory, elderly, pregnant, outdoor workers, pets), building draftiness, heating source, cooking fuel, daily car commute distance, and existing air purifiers.
+  - Nearby physical ground-station lookup via **Sensor.Community** (keyless) plus optional **OpenAQ v3** (`OPENAQ_API_KEY`) and **PurpleAir** (`PURPLEAIR_API_KEY`), with inverse-distance blended PM2.5.
+  - Evaluates thermal inversion risk and identifies the cleanest 3-hour rolling ventilation/errand window over the next 24 hours.
+- **Persistent Profiles, Indoor Sensor Calibration & Morning Smog Alerts** (`src/components/LifestyleForm.tsx`, `src/components/AlertsModal.tsx`, `server/storageService.ts`):
+  - Automatically persists active household/community profiles, adopted choices, location, and named saved profiles in `localStorage`.
+  - Optional indoor PM2.5 monitor input calibrates the real-world Indoor/Outdoor (I/O) infiltration ratio and daily inhaled exposure baseline in `shared/impactMath.ts`.
+  - Morning smog & thermal inversion alert subscriptions (`GET/POST/DELETE /api/alerts`, `POST /api/alerts/evaluate`) with browser notification support and in-app alert banners.
+- **Shareable Community Pledges & 1-Page Printable Guide** (`src/components/CommunityPledgesSection.tsx`, `src/components/PrintableGuideModal.tsx`):
+  - Create, join, and share neighborhood/school clean-air pledges (no-idling school lanes, bulk MERV-13 filter co-ops, zero leaf burning, clean-air refuge rooms) via `?pledge=<id>` links.
+  - Dedicated 1-page printable / Save-to-PDF DIY Corsi-Rosenthal purifier & emergency smog action sheet.
+- **Multilingual Localization (`en`, `ur`, `hi`, `pl`, `es`)** (`src/i18n/translations.ts`):
+  - UI localization (including RTL layout for Urdu) and language-aware recommendations & GenAI chat responses.
 - **GenAI + Local Hybrid Advisory Engine** (`server/advisorService.ts`):
-  - **Gemini Live Mode**: Uses `@google/genai` (`gemini-2.5-flash` by default) with structured JSON schema output when `GEMINI_API_KEY` is configured in `.env` or entered via the UI Settings modal.
-  - **Local Advisor Mode**: Built-in deterministic exposure & rule engine works immediately without an API key.
-  - **Contextual Q&A Chat** (`src/components/AdvisorChat.tsx`): Answers follow-up questions grounded in the selected city's live AQI, inversion conditions, and adopted actions.
-- **Direct Impact Ledger & Community Multiplier** (`shared/impactMath.ts`, `src/components/ImpactLedger.tsx`):
-  - Quantifies personal daily inhaled PM2.5 reduction (`µg/day` and `%` using diminishing-returns stacking), household `CO₂e` avoided, local `NOₓ + PM2.5` emissions prevented, and neighborhood-scale impact from 10 to 1,000 households.
+  - **Gemini Live Mode** (`@google/genai` `gemini-2.5-flash`) when `GEMINI_API_KEY` is configured in `.env` or via the UI Settings modal, with a built-in **Local Advisor Mode** fallback.
 
 ## Quick Start
 
@@ -26,29 +30,10 @@ npm run dev
 - Web UI: `http://localhost:5173`
 - API Server: `http://localhost:3001`
 
-### Production Build & Run
-
-```bash
-npm run build
-npm start
-```
-
-Serves both the built frontend and API on `http://localhost:3001`.
-
-### Optional: Enable Live Gemini GenAI
-
-Copy `.env.example` to `.env` and add your Gemini API key:
-
-```env
-GEMINI_API_KEY=your_api_key_here
-GEMINI_MODEL=gemini-2.5-flash
-```
-
-Or click **Connect Gemini Key** in the top-right header of the web app.
-
-## Verification
+### Production Build & Verification
 
 ```bash
 npm run build
 npm test
+npm start
 ```

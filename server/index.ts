@@ -9,10 +9,20 @@ import {
   searchLocations,
 } from './airQualityService.js';
 import { askAdvisorChat, generateActionPlan } from './advisorService.js';
-import type { AirQualitySnapshot, ChatMessage, LifestyleProfile } from '../shared/types.js';
+import { LocalDataStore } from './storageService.js';
+import type {
+  AirQualitySnapshot,
+  ChatMessage,
+  LifestyleProfile,
+  PledgeCategory,
+  SmogAlertSubscription,
+  SupportedLanguage,
+} from '../shared/types.js';
 
-export function createApp() {
+export function createApp(options?: { storePath?: string }) {
   const app = express();
+  const store = new LocalDataStore(options?.storePath);
+
   app.use(cors());
   app.use(express.json({ limit: '1mb' }));
 
@@ -20,6 +30,8 @@ export function createApp() {
     res.json({
       ok: true,
       geminiConfigured: Boolean((process.env.GEMINI_API_KEY || '').trim()),
+      openAqConfigured: Boolean((process.env.OPENAQ_API_KEY || '').trim()),
+      purpleAirConfigured: Boolean((process.env.PURPLEAIR_API_KEY || '').trim()),
       model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     });
   });
@@ -63,10 +75,11 @@ export function createApp() {
   });
 
   app.post('/api/recommendations', async (req, res) => {
-    const { airQuality, profile, apiKey } = req.body as {
+    const { airQuality, profile, apiKey, language } = req.body as {
       airQuality?: AirQualitySnapshot;
       profile?: LifestyleProfile;
       apiKey?: string;
+      language?: SupportedLanguage;
     };
 
     if (!airQuality || !airQuality.current || !profile) {
@@ -75,18 +88,24 @@ export function createApp() {
     }
 
     const headerKey = req.header('x-gemini-api-key');
-    const plan = await generateActionPlan(airQuality, profile, apiKey || headerKey);
+    const plan = await generateActionPlan(
+      airQuality,
+      profile,
+      apiKey || headerKey,
+      language || 'en'
+    );
     res.json(plan);
   });
 
   app.post('/api/chat', async (req, res) => {
-    const { question, airQuality, profile, adoptedTitles, history, apiKey } = req.body as {
+    const { question, airQuality, profile, adoptedTitles, history, apiKey, language } = req.body as {
       question?: string;
       airQuality?: AirQualitySnapshot;
       profile?: LifestyleProfile;
       adoptedTitles?: string[];
       history?: ChatMessage[];
       apiKey?: string;
+      language?: SupportedLanguage;
     };
 
     if (!question?.trim() || !airQuality || !profile) {
@@ -102,9 +121,101 @@ export function createApp() {
       adoptedTitles: adoptedTitles ?? [],
       history: history ?? [],
       apiKeyOverride: apiKey || headerKey,
+      language: language || 'en',
     });
 
     res.json(result);
+  });
+
+  // Morning Smog & Inversion Alert Subscriptions
+  app.get('/api/alerts', (_req, res) => {
+    res.json({ alerts: store.listAlerts() });
+  });
+
+  app.post('/api/alerts', (req, res) => {
+    const body = req.body as Partial<SmogAlertSubscription>;
+    if (
+      !body.locationName ||
+      !Number.isFinite(body.latitude) ||
+      !Number.isFinite(body.longitude)
+    ) {
+      res.status(400).json({ error: 'locationName, latitude, and longitude are required.' });
+      return;
+    }
+
+    const sub = store.upsertAlert({
+      id: body.id,
+      label: body.label || `${body.locationName} Morning Smog Alert`,
+      locationName: body.locationName,
+      latitude: Number(body.latitude),
+      longitude: Number(body.longitude),
+      aqiThreshold: Number(body.aqiThreshold ?? 150),
+      alertOnInversion: body.alertOnInversion ?? true,
+      morningTime: body.morningTime || '07:00',
+      channel: body.channel || 'browser',
+      contact: body.contact,
+      enabled: body.enabled ?? true,
+    });
+    res.status(201).json({ alert: sub });
+  });
+
+  app.delete('/api/alerts/:id', (req, res) => {
+    const removed = store.deleteAlert(req.params.id);
+    if (!removed) {
+      res.status(404).json({ error: 'Alert subscription not found.' });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  app.post('/api/alerts/evaluate', (req, res) => {
+    const { airQuality } = req.body as { airQuality?: AirQualitySnapshot };
+    if (!airQuality || !airQuality.current) {
+      res.status(400).json({ error: 'airQuality snapshot is required.' });
+      return;
+    }
+    const evaluations = store.evaluateAlerts(airQuality);
+    res.json({ evaluations });
+  });
+
+  // Shareable Community & School Pledges
+  app.get('/api/pledges', (_req, res) => {
+    res.json({ pledges: store.listPledges() });
+  });
+
+  app.post('/api/pledges', (req, res) => {
+    const body = req.body as {
+      category?: PledgeCategory;
+      title?: string;
+      description?: string;
+      city?: string;
+      organizer?: string;
+      targetHouseholds?: number;
+    };
+
+    if (!body.title?.trim() || !body.description?.trim() || !body.city?.trim()) {
+      res.status(400).json({ error: 'title, description, and city are required.' });
+      return;
+    }
+
+    const pledge = store.createPledge({
+      category: body.category || 'no_idling_school',
+      title: body.title,
+      description: body.description,
+      city: body.city,
+      organizer: body.organizer || 'Neighborhood Group',
+      targetHouseholds: body.targetHouseholds,
+    });
+    res.status(201).json({ pledge });
+  });
+
+  app.post('/api/pledges/:id/join', (req, res) => {
+    const pledge = store.joinPledge(req.params.id);
+    if (!pledge) {
+      res.status(404).json({ error: 'Pledge not found.' });
+      return;
+    }
+    res.json({ pledge });
   });
 
   // Serve production build if present

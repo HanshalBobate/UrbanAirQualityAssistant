@@ -4,12 +4,15 @@ import {
   Clock,
   CloudFog,
   MapPin,
+  Radio,
   Search,
   Thermometer,
   Wind,
 } from 'lucide-react';
 import type { AirQualitySnapshot, CitySearchResult, PresetCity } from '@shared/types';
+import { computeBlendedGroundPm25 } from '@shared/impactMath';
 import { searchCities } from '../api';
+import type { TranslationStrings } from '../i18n/translations';
 
 interface AirQualityHeroProps {
   airQuality: AirQualitySnapshot | null;
@@ -23,6 +26,7 @@ interface AirQualityHeroProps {
     region?: string;
     timezone?: string;
   }) => void;
+  t: TranslationStrings;
 }
 
 function getAqiColors(aqi: number) {
@@ -30,36 +34,30 @@ function getAqiColors(aqi: number) {
     return {
       badge: 'bg-emerald-100 text-emerald-800 border-emerald-200',
       ring: 'ring-emerald-500/30 bg-emerald-600 text-white',
-      bar: 'bg-emerald-500',
     };
   if (aqi <= 100)
     return {
       badge: 'bg-amber-100 text-amber-800 border-amber-200',
       ring: 'ring-amber-500/30 bg-amber-500 text-white',
-      bar: 'bg-amber-400',
     };
   if (aqi <= 150)
     return {
       badge: 'bg-orange-100 text-orange-800 border-orange-200',
       ring: 'ring-orange-500/30 bg-orange-500 text-white',
-      bar: 'bg-orange-500',
     };
   if (aqi <= 200)
     return {
       badge: 'bg-rose-100 text-rose-800 border-rose-200',
       ring: 'ring-rose-500/30 bg-rose-600 text-white',
-      bar: 'bg-rose-500',
     };
   if (aqi <= 300)
     return {
       badge: 'bg-purple-100 text-purple-900 border-purple-200',
       ring: 'ring-purple-500/30 bg-purple-700 text-white',
-      bar: 'bg-purple-600',
     };
   return {
     badge: 'bg-red-950 text-red-100 border-red-800',
     ring: 'ring-red-900/40 bg-red-900 text-white',
-    bar: 'bg-red-800',
   };
 }
 
@@ -68,6 +66,7 @@ export function AirQualityHero({
   presets,
   loading,
   onSelectLocation,
+  t,
 }: AirQualityHeroProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<CitySearchResult[]>([]);
@@ -103,6 +102,10 @@ export function AirQualityHero({
     180,
     ...(airQuality?.hourly.map((h) => h.usAqi) ?? [180])
   );
+  const groundStations = airQuality?.groundStations ?? [];
+  const blended = current
+    ? computeBlendedGroundPm25(current.pm25, groundStations)
+    : { blendedPm25: 0, stationCount: 0 };
 
   return (
     <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm sm:p-6">
@@ -116,7 +119,7 @@ export function AirQualityHero({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => results.length > 0 && setDropdownOpen(true)}
-              placeholder="Search any city or neighborhood (e.g., Lahore, Denver, Warsaw)..."
+              placeholder={t.searchPlaceholder}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-sky-500 focus:bg-white focus:ring-2 focus:ring-sky-500/20"
             />
             {searching && (
@@ -156,7 +159,7 @@ export function AirQualityHero({
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-xs font-medium text-slate-500">Winter Smog Hotspots:</span>
+          <span className="mr-1 text-xs font-medium text-slate-500">{t.winterHotspots}</span>
           {presets.map((p) => {
             const active = airQuality?.locationName === p.name;
             return (
@@ -191,7 +194,7 @@ export function AirQualityHero({
       {/* Live Snapshot Grid */}
       {loading || !airQuality || !current ? (
         <div className="flex h-44 items-center justify-center text-sm text-slate-500">
-          Loading live air quality & thermal inversion telemetry...
+          Loading live air quality, ground sensors & thermal inversion telemetry...
         </div>
       ) : (
         <div className="mt-5 grid gap-5 lg:grid-cols-12">
@@ -222,8 +225,12 @@ export function AirQualityHero({
 
                 <div className="mt-2.5 grid grid-cols-3 gap-2 text-xs">
                   <div className="rounded-lg bg-slate-50 px-2.5 py-1.5">
-                    <span className="block text-slate-500">PM2.5</span>
-                    <span className="font-bold text-slate-900">{current.pm25} µg/m³</span>
+                    <span className="block text-slate-500">
+                      {blended.stationCount > 0 ? 'Blended PM2.5' : 'PM2.5'}
+                    </span>
+                    <span className="font-bold text-slate-900">
+                      {blended.blendedPm25} µg/m³
+                    </span>
                   </div>
                   <div className="rounded-lg bg-slate-50 px-2.5 py-1.5">
                     <span className="block text-slate-500">PM10</span>
@@ -245,10 +252,39 @@ export function AirQualityHero({
                     {current.windSpeedKmh} km/h wind
                   </span>
                   <span className="text-[11px] text-slate-400">
-                    Source: {current.source === 'open-meteo' ? 'Open-Meteo Live' : 'Offline Profile'}
+                    {current.source === 'open-meteo' ? 'Open-Meteo Live' : 'Offline Profile'}
                   </span>
                 </div>
               </div>
+            </div>
+
+            {/* Ground Stations Panel */}
+            <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-3.5 py-2.5 text-xs">
+              <div className="flex items-center justify-between gap-2 font-semibold text-slate-800">
+                <span className="inline-flex items-center gap-1.5">
+                  <Radio className="h-3.5 w-3.5 text-emerald-600" />
+                  {t.nearbySensors} ({groundStations.length})
+                </span>
+                {groundStations.length > 0 && (
+                  <span className="text-[11px] font-medium text-emerald-700">
+                    Sensor-blended
+                  </span>
+                )}
+              </div>
+              {groundStations.length === 0 ? (
+                <p className="mt-1 text-[11px] text-slate-500">{t.noSensorsNearby}</p>
+              ) : (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {groundStations.slice(0, 4).map((st) => (
+                    <span
+                      key={st.id}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700"
+                    >
+                      <strong>{st.pm25}</strong> µg/m³ • {st.distanceKm} km ({st.provider})
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Thermal Inversion & Best Window Callouts */}
@@ -312,7 +348,7 @@ export function AirQualityHero({
               </div>
             </div>
 
-            <div className="mt-4 flex h-36 items-end gap-1 pt-4">
+            <div className="mt-4 flex h-44 items-end gap-1 pt-4">
               {airQuality.hourly.slice(0, 24).map((pt, i) => {
                 const heightPct = Math.max(10, Math.round((pt.usAqi / maxHourlyAqi) * 100));
                 const barColor =

@@ -1,18 +1,27 @@
-import { Sparkles, Users, Home } from 'lucide-react';
+import { useState } from 'react';
+import { BookmarkPlus, Gauge, Home, Sparkles, Trash2, Users } from 'lucide-react';
 import type {
   CommuteMode,
   CookingFuel,
   HeatingSource,
   HousingType,
   LifestyleProfile,
+  SavedHouseholdProfile,
   SensitivityGroup,
 } from '@shared/types';
+import type { TranslationStrings } from '../i18n/translations';
 
 interface LifestyleFormProps {
   profile: LifestyleProfile;
+  outdoorPm25: number;
+  savedProfiles: SavedHouseholdProfile[];
+  onLoadProfile: (saved: SavedHouseholdProfile) => void;
+  onSaveProfileAs: (name: string) => void;
+  onDeleteSavedProfile: (id: string) => void;
   onChange: (next: LifestyleProfile) => void;
   onGenerate: () => void;
   generating: boolean;
+  t: TranslationStrings;
 }
 
 const SENSITIVITY_OPTIONS: Array<{ id: SensitivityGroup; label: string }> = [
@@ -26,10 +35,19 @@ const SENSITIVITY_OPTIONS: Array<{ id: SensitivityGroup; label: string }> = [
 
 export function LifestyleForm({
   profile,
+  outdoorPm25,
+  savedProfiles,
+  onLoadProfile,
+  onSaveProfileAs,
+  onDeleteSavedProfile,
   onChange,
   onGenerate,
   generating,
+  t,
 }: LifestyleFormProps) {
+  const [newProfileName, setNewProfileName] = useState('');
+  const [showSaveRow, setShowSaveRow] = useState(false);
+
   const toggleSensitivity = (id: SensitivityGroup) => {
     const exists = profile.sensitivities.includes(id);
     const next = exists
@@ -38,15 +56,86 @@ export function LifestyleForm({
     onChange({ ...profile, sensitivities: next });
   };
 
+  const ioRatio =
+    typeof profile.measuredIndoorPm25 === 'number' && outdoorPm25 > 0
+      ? Math.round((profile.measuredIndoorPm25 / outdoorPm25) * 100) / 100
+      : null;
+
   return (
     <aside className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
         <div>
-          <h2 className="text-base font-bold text-slate-900">Tailor to Your Lifestyle</h2>
-          <p className="text-xs text-slate-500">
-            Personalize routines, indoor hacks & emission swaps.
-          </p>
+          <h2 className="text-base font-bold text-slate-900">{t.tailorTitle}</h2>
+          <p className="text-xs text-slate-500">{t.tailorSubtitle}</p>
         </div>
+      </div>
+
+      {/* Saved Profiles Switcher */}
+      <div className="mt-3 rounded-xl border border-slate-200/80 bg-slate-50/70 p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-slate-600">
+            {t.savedProfiles} ({savedProfiles.length})
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowSaveRow((v) => !v)}
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-700 hover:text-sky-900"
+          >
+            <BookmarkPlus className="h-3.5 w-3.5" />
+            {t.saveProfileBtn}
+          </button>
+        </div>
+
+        {showSaveRow && (
+          <div className="mt-2 flex gap-1.5">
+            <input
+              type="text"
+              value={newProfileName}
+              onChange={(e) => setNewProfileName(e.target.value)}
+              placeholder="e.g., Grandma's Apt / School"
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (!newProfileName.trim()) return;
+                onSaveProfileAs(newProfileName.trim());
+                setNewProfileName('');
+                setShowSaveRow(false);
+              }}
+              className="rounded-lg bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white"
+            >
+              Save
+            </button>
+          </div>
+        )}
+
+        {savedProfiles.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {savedProfiles.map((sp) => (
+              <div
+                key={sp.id}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[11px]"
+              >
+                <button
+                  type="button"
+                  onClick={() => onLoadProfile(sp)}
+                  className="font-medium text-slate-800 hover:text-sky-700"
+                >
+                  {sp.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteSavedProfile(sp.id)}
+                  title="Delete saved profile"
+                  className="text-slate-400 hover:text-rose-600"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="mt-4 space-y-4">
@@ -72,7 +161,7 @@ export function LifestyleForm({
               }`}
             >
               <Home className="h-3.5 w-3.5" />
-              Family Home
+              {t.familyHome}
             </button>
             <button
               type="button"
@@ -90,9 +179,43 @@ export function LifestyleForm({
               }`}
             >
               <Users className="h-3.5 w-3.5" />
-              Community / School
+              {t.communitySchool}
             </button>
           </div>
+        </div>
+
+        {/* Optional Indoor Sensor Calibration */}
+        <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/50 p-3">
+          <label className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-indigo-950">
+            <Gauge className="h-3.5 w-3.5 text-indigo-600" />
+            {t.indoorSensorLabel}
+          </label>
+          <input
+            type="number"
+            min={0}
+            max={999}
+            step={1}
+            value={profile.measuredIndoorPm25 ?? ''}
+            onChange={(e) => {
+              const raw = e.target.value;
+              onChange({
+                ...profile,
+                measuredIndoorPm25: raw === '' ? null : Math.max(0, Number(raw)),
+              });
+            }}
+            placeholder={t.indoorSensorPlaceholder}
+            className="w-full rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-xs text-slate-900 outline-none focus:border-indigo-500"
+          />
+          {ioRatio !== null && (
+            <div className="mt-1.5 text-[11px] font-medium text-indigo-900">
+              {t.ioRatioLabel}: <strong>{ioRatio}</strong>{' '}
+              {ioRatio <= 0.4
+                ? '(Well-sealed / filtered)'
+                : ioRatio <= 0.7
+                ? '(Moderate infiltration)'
+                : '(High smog leakage)'}
+            </div>
+          )}
         </div>
 
         {/* Sensitive Groups */}
@@ -249,7 +372,7 @@ export function LifestyleForm({
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Sparkles className="h-4 w-4 text-sky-400" />
-          {generating ? 'Synthesizing Tailored Plan...' : 'Regenerate Tailored Plan'}
+          {generating ? t.synthesizingPlan : t.regeneratePlan}
         </button>
       </div>
     </aside>
