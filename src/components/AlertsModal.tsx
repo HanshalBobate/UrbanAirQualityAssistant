@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Bell, BellRing, Check, Trash2, X } from 'lucide-react';
 import type { AirQualitySnapshot, SmogAlertSubscription } from '@shared/types';
 
@@ -39,6 +39,15 @@ export function AlertsModal({
   const [saving, setSaving] = useState(false);
   const [notifStatus, setNotifStatus] = useState<string>('');
 
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
+
   if (!open) return null;
 
   const requestBrowserNotif = async () => {
@@ -77,17 +86,23 @@ export function AlertsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-xs">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="alerts-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-xs"
+    >
       <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
-            <BellRing className="h-4 w-4 text-amber-600" />
-            <h3 className="text-base font-bold text-slate-900">
+            <BellRing className="h-4 w-4 text-amber-600" aria-hidden="true" />
+            <h3 id="alerts-modal-title" className="text-base font-bold text-slate-900">
               Morning Smog & Inversion Alerts
             </h3>
           </div>
           <button
             type="button"
+            aria-label="Close morning alerts dialog"
             onClick={onClose}
             className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
           >

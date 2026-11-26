@@ -119,7 +119,11 @@ export function AdvisorChat({
 
       {/* Chat Log */}
       {messages.length > 0 && (
-        <div className="scrollbar-thin mt-4 max-h-80 space-y-3 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/70 p-3.5">
+        <div
+          aria-live="polite"
+          aria-label="Advisor conversation history"
+          className="scrollbar-thin mt-4 max-h-80 space-y-3 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/70 p-3.5"
+        >
           {messages.map((msg) => (
             <div
               key={msg.id}

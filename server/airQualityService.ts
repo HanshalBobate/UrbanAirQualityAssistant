@@ -349,9 +349,21 @@ export function buildFallbackSnapshot(
   };
 }
 
+const AIR_CACHE_TTL_MS = 5 * 60 * 1000;
+const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
+
+const airQualityCache = new Map<string, { expiresAt: number; value: AirQualitySnapshot }>();
+const locationSearchCache = new Map<string, { expiresAt: number; value: CitySearchResult[] }>();
+
 export async function searchLocations(query: string): Promise<CitySearchResult[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
+
+  const cacheKey = trimmed.toLowerCase();
+  const cached = locationSearchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
 
   try {
     const url = new URL('https://geocoding-api.open-meteo.com/v1/search');
@@ -375,7 +387,7 @@ export async function searchLocations(query: string): Promise<CitySearchResult[]
     };
 
     if (data.results && data.results.length > 0) {
-      return data.results.map((r) => ({
+      const mapped = data.results.map((r) => ({
         id: String(r.id),
         name: r.name,
         admin1: r.admin1,
@@ -384,6 +396,11 @@ export async function searchLocations(query: string): Promise<CitySearchResult[]
         longitude: r.longitude,
         timezone: r.timezone,
       }));
+      locationSearchCache.set(cacheKey, {
+        expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
+        value: mapped,
+      });
+      return mapped;
     }
   } catch {
     // Fall back to local preset city matching when offline or blocked.
@@ -414,6 +431,16 @@ export async function fetchAirQualitySnapshot(params: {
   timezone?: string;
 }): Promise<AirQualitySnapshot> {
   const { latitude, longitude, name, country, region, timezone } = params;
+  const cacheKey = `${latitude.toFixed(2)},${longitude.toFixed(2)}`;
+  const cached = airQualityCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      ...cached.value,
+      locationName: name,
+      country,
+      region,
+    };
+  }
 
   try {
     const aqUrl = new URL('https://air-quality-api.open-meteo.com/v1/air-quality');
@@ -511,7 +538,7 @@ export async function fetchAirQualitySnapshot(params: {
 
     const inversion = assessInversionRisk(pm25, windSpeedKmh, temperatureC, humidityPct);
 
-    return {
+    const snapshot: AirQualitySnapshot = {
       locationName: name,
       region,
       country,
@@ -538,6 +565,12 @@ export async function fetchAirQualitySnapshot(params: {
       hourly,
       bestVentilationWindow: findBestVentilationWindow(hourly),
     };
+
+    airQualityCache.set(cacheKey, {
+      expiresAt: Date.now() + AIR_CACHE_TTL_MS,
+      value: snapshot,
+    });
+    return snapshot;
   } catch {
     return buildFallbackSnapshot(name, country, latitude, longitude, timezone, region);
   }

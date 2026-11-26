@@ -19,12 +19,39 @@ import type {
   SupportedLanguage,
 } from '../shared/types.js';
 
+function createRateLimiter(maxRequests: number, windowMs: number) {
+  const hits = new Map<string, number[]>();
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    const recent = (hits.get(ip) ?? []).filter((t) => now - t < windowMs);
+    if (recent.length >= maxRequests) {
+      res.status(429).json({
+        error: 'Too many requests. Please wait a moment before generating another AI response.',
+      });
+      return;
+    }
+    recent.push(now);
+    hits.set(ip, recent);
+    next();
+  };
+}
+
 export function createApp(options?: { storePath?: string }) {
   const app = express();
   const store = new LocalDataStore(options?.storePath);
+  const aiRateLimit = createRateLimiter(30, 60 * 1000);
 
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    next();
+  });
   app.use(cors());
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '512kb' }));
 
   app.get('/api/health', (_req, res) => {
     res.json({
@@ -58,23 +85,32 @@ export function createApp(options?: { storePath?: string }) {
     const region = req.query.region ? String(req.query.region) : undefined;
     const timezone = req.query.timezone ? String(req.query.timezone) : undefined;
 
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-      res.status(400).json({ error: 'Valid numeric lat and lon query parameters are required.' });
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon) ||
+      lat < -90 ||
+      lat > 90 ||
+      lon < -180 ||
+      lon > 180
+    ) {
+      res.status(400).json({
+        error: 'Valid numeric lat (-90..90) and lon (-180..180) query parameters are required.',
+      });
       return;
     }
 
     const snapshot = await fetchAirQualitySnapshot({
       latitude: lat,
       longitude: lon,
-      name,
-      country,
-      region,
-      timezone,
+      name: name.slice(0, 120),
+      country: country.slice(0, 80),
+      region: region?.slice(0, 80),
+      timezone: timezone?.slice(0, 64),
     });
     res.json(snapshot);
   });
 
-  app.post('/api/recommendations', async (req, res) => {
+  app.post('/api/recommendations', aiRateLimit, async (req, res) => {
     const { airQuality, profile, apiKey, language } = req.body as {
       airQuality?: AirQualitySnapshot;
       profile?: LifestyleProfile;
@@ -97,7 +133,7 @@ export function createApp(options?: { storePath?: string }) {
     res.json(plan);
   });
 
-  app.post('/api/chat', async (req, res) => {
+  app.post('/api/chat', aiRateLimit, async (req, res) => {
     const { question, airQuality, profile, adoptedTitles, history, apiKey, language } = req.body as {
       question?: string;
       airQuality?: AirQualitySnapshot;
@@ -112,14 +148,18 @@ export function createApp(options?: { storePath?: string }) {
       res.status(400).json({ error: 'question, airQuality, and profile are required.' });
       return;
     }
+    if (question.trim().length > 1500) {
+      res.status(400).json({ error: 'Question must be 1500 characters or fewer.' });
+      return;
+    }
 
     const headerKey = req.header('x-gemini-api-key');
     const result = await askAdvisorChat({
       question: question.trim(),
       air: airQuality,
       profile,
-      adoptedTitles: adoptedTitles ?? [],
-      history: history ?? [],
+      adoptedTitles: (adoptedTitles ?? []).slice(0, 15),
+      history: (history ?? []).slice(-10),
       apiKeyOverride: apiKey || headerKey,
       language: language || 'en',
     });

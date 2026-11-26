@@ -358,6 +358,12 @@ export default function App() {
 
   return (
     <div dir={t.dir} className="min-h-screen bg-slate-50 text-slate-900">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-slate-900 focus:px-3 focus:py-2 focus:text-xs focus:font-semibold focus:text-white"
+      >
+        Skip to main content
+      </a>
       {/* Top Navbar */}
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/90 backdrop-blur-md print:hidden">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
@@ -455,10 +461,13 @@ export default function App() {
       </header>
 
       {/* Main Layout */}
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 print:hidden">
+      <main id="main-content" className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 print:hidden">
         {/* Triggered Morning Alert Banner */}
         {triggeredAlerts.length > 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-950 shadow-xs">
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-950 shadow-xs"
+          >
             <div className="flex items-center gap-2.5">
               <BellRing className="h-4 w-4 shrink-0 text-amber-600" />
               <div>

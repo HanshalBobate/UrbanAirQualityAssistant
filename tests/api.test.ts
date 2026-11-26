@@ -41,8 +41,23 @@ describe('ClearAir API endpoints', () => {
     expect(presetsRes.body.presets.length).toBeGreaterThanOrEqual(5);
   });
 
-  it('rejects invalid /api/air-quality coordinates with 400', async () => {
+  it('rejects invalid /api/air-quality coordinates with 400 and sets security headers', async () => {
     const res = await request(app).get('/api/air-quality?lat=bad&lon=74.3');
+    expect(res.status).toBe(400);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+
+    const outOfRange = await request(app).get('/api/air-quality?lat=120&lon=74.3');
+    expect(outOfRange.status).toBe(400);
+  });
+
+  it('rejects oversized chat questions with 400', async () => {
+    const airQuality = buildFallbackSnapshot('Lahore', 'Pakistan', 31.55, 74.34);
+    const res = await request(app).post('/api/chat').send({
+      question: 'a'.repeat(1600),
+      airQuality,
+      profile: sampleProfile,
+    });
     expect(res.status).toBe(400);
   });
 
